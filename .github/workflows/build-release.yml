@@ -1,0 +1,126 @@
+name: Build CloudBrowser for Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*'
+  workflow_dispatch:   # Permite ejecutar manualmente desde la pestaña Actions
+
+permissions:
+  contents: write      # Necesario para crear Releases
+
+jobs:
+  build:
+    name: Build Windows executable
+    runs-on: windows-latest
+
+    steps:
+      # ------------------------------------------------------------------ #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------ #
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ------------------------------------------------------------------ #
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt5==5.15.11 PyQtWebEngine==5.15.7 pyinstaller==6.11.1
+
+      # ------------------------------------------------------------------ #
+      - name: Build executable with PyInstaller
+        run: |
+          pyinstaller CloudBrowser.spec --noconfirm --clean
+
+      # ------------------------------------------------------------------ #
+      - name: Verify build
+        shell: pwsh
+        run: |
+          $exe = "dist\CloudBrowser\CloudBrowser.exe"
+          if (Test-Path $exe) {
+            $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+            Write-Output "✓ Ejecutable creado: $exe ($size MB)"
+            Write-Output "Contenido de dist\CloudBrowser:"
+            Get-ChildItem "dist\CloudBrowser" | Select-Object Name, Length | Format-Table
+          } else {
+            Write-Error "✗ No se encontró el ejecutable"
+            exit 1
+          }
+
+      # ------------------------------------------------------------------ #
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\CloudBrowser\*" `
+            -DestinationPath "CloudBrowser-Windows-x64.zip" `
+            -CompressionLevel Optimal
+          $zipSize = [math]::Round((Get-Item "CloudBrowser-Windows-x64.zip").Length / 1MB, 1)
+          Write-Output "ZIP creado: CloudBrowser-Windows-x64.zip ($zipSize MB)"
+
+      # ------------------------------------------------------------------ #
+      # Siempre sube el artifact para descarga desde la pestaña Actions
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudBrowser-Windows-x64
+          path: CloudBrowser-Windows-x64.zip
+          retention-days: 90
+          compression-level: 0   # Ya está comprimido
+
+      # ------------------------------------------------------------------ #
+      # Crea un Release solo cuando se hace push con un tag v* o manualmente
+      - name: Get version
+        id: version
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -like "refs/tags/v*") {
+            $ver = "${{ github.ref_name }}"
+          } else {
+            $ver = "build-${{ github.run_number }}"
+          }
+          echo "tag=$ver" >> $env:GITHUB_OUTPUT
+          echo "Versión: $ver"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: CloudBrowser ${{ steps.version.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: CloudBrowser-Windows-x64.zip
+          body: |
+            ## CloudBrowser — Navegador con Cloudflare 1.1.1.1
+
+            ### ⬇️ Descarga e instalación (sin instalar nada)
+
+            1. Descarga **CloudBrowser-Windows-x64.zip**
+            2. Extrae la carpeta en cualquier lugar de tu PC
+            3. Ejecuta **CloudBrowser.exe**
+
+            > No requiere instalar Python, .NET, ni ninguna dependencia.
+
+            ---
+
+            ### ✨ Características
+
+            | Función | Detalle |
+            |---|---|
+            | 🛡️ Bloqueo de anuncios | ~130 dominios de publicidad y rastreo bloqueados |
+            | 🔒 DNS sobre HTTPS | Cloudflare 1.1.1.1 — evita restricciones DNS del ISP |
+            | ⚡ Motor | Chromium integrado (QtWebEngine) |
+            | 📑 Pestañas | Múltiples pestañas, modo privado |
+            | 🎨 Interfaz | Tema oscuro moderno |
+            | 🖥️ Sistema | Opción para configurar DNS del sistema a 1.1.1.1 |
+
+            ### ⚙️ Requisitos del sistema
+            - Windows 10 / 11 (64-bit)
+            - Sin instalación requerida

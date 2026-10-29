@@ -47,14 +47,21 @@ class BrowserTab(QWidget):
 class BrowserWindow(QMainWindow):
     """Ventana principal del navegador con barra de pestañas y toolbar."""
 
-    def __init__(self):
+    def __init__(self, profile: QWebEngineProfile = None,
+                 interceptor: AdBlockInterceptor = None,
+                 private: bool = False):
         super().__init__()
-        self.setWindowTitle("CloudBrowser")
+        title = "CloudBrowser — Navegación Privada 🕵️" if private else "CloudBrowser"
+        self.setWindowTitle(title)
         self.resize(1366, 800)
 
         # Perfil de navegación con interceptor de anuncios
-        self.profile = QWebEngineProfile.defaultProfile()
-        self.interceptor = AdBlockInterceptor()
+        if profile is None:
+            self.profile = QWebEngineProfile.defaultProfile()
+            self.interceptor = AdBlockInterceptor()
+        else:
+            self.profile = profile
+            self.interceptor = interceptor
         self.profile.setUrlRequestInterceptor(self.interceptor)
 
         # Configuración del motor web
@@ -373,9 +380,10 @@ class BrowserWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _new_private_window(self):
-        private_profile = QWebEngineProfile(self)
-        private_profile.setUrlRequestInterceptor(self.interceptor)
-        win = PrivateBrowserWindow(private_profile, self.interceptor)
+        private_profile = QWebEngineProfile(self)   # perfil sin cookies persistentes
+        win = BrowserWindow(profile=private_profile,
+                            interceptor=self.interceptor,
+                            private=True)
         win.show()
 
     # ------------------------------------------------------------------
@@ -438,31 +446,3 @@ class BrowserWindow(QMainWindow):
             "<p><small>Basado en PyQt5 + QtWebEngine</small></p>",
         )
 
-
-# ---------------------------------------------------------------------------
-# Ventana privada
-# ---------------------------------------------------------------------------
-
-class PrivateBrowserWindow(BrowserWindow):
-    """Ventana de navegación privada con perfil separado sin persistencia."""
-
-    def __init__(self, profile: QWebEngineProfile, interceptor: AdBlockInterceptor):
-        # Sobreescribir el perfil antes de llamar al __init__ padre
-        # Es más limpio hacerlo directamente
-        QMainWindow.__init__(self)
-        self.setWindowTitle("CloudBrowser — Navegación Privada 🕵️")
-        self.resize(1280, 768)
-
-        self.profile = profile
-        self.interceptor = interceptor
-        self.profile.setUrlRequestInterceptor(self.interceptor)
-
-        s = self.profile.settings()
-        s.setAttribute(QWebEngineSettings.FullScreenSupportEnabled, True)
-        s.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
-
-        self._build_toolbar()
-        self._build_tabs()
-        self._build_menu()
-        self._build_shortcuts()
-        self.add_tab(HOME_URL)
