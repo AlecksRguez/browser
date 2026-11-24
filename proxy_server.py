@@ -140,6 +140,36 @@ def _tunnel(a: socket.socket, b: socket.socket) -> None:
 # Manejo de conexiones
 # ---------------------------------------------------------------------------
 
+def _diag_page() -> bytes:
+    """Página de diagnóstico: prueba DoH y reporta resultados."""
+    lines = ["CloudBrowser Proxy - Diagnóstico\n", "=" * 40 + "\n\n"]
+    for ip in DOH_SERVERS:
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            conn = http.client.HTTPSConnection(ip, context=ctx, timeout=3)
+            conn.request("GET", f"{DOH_PATH}?name=youtube.com&type=A",
+                         headers={"Accept": "application/dns-json"})
+            resp = conn.getresponse()
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                answers = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
+                result = f"OK -> youtube.com = {answers[0] if answers else 'sin respuesta A'}"
+            else:
+                result = f"HTTP {resp.status}"
+            conn.close()
+        except Exception as e:
+            result = f"ERROR: {e}"
+        lines.append(f"DoH {ip}: {result}\n")
+
+    body = "".join(lines).encode()
+    return (
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n"
+        b"Connection: close\r\n\r\n"
+    ) + body
+
+
 def _handle(client: socket.socket) -> None:
     """Procesa una conexión entrante del navegador."""
     remote: Optional[socket.socket] = None
@@ -154,6 +184,11 @@ def _handle(client: socket.socket) -> None:
             return
 
         method = parts[0].upper()
+
+        # Página de diagnóstico: abre http://localhost:8899/ en CloudBrowser
+        if method == b"GET" and (len(parts) < 2 or parts[1] in (b"/", b"/diag")):
+            client.sendall(_diag_page())
+            return
 
         if method == b"CONNECT":
             # Petición HTTPS: CONNECT hostname:port HTTP/1.1
