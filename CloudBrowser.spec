@@ -15,6 +15,7 @@ a = Analysis(
         'window',
         'interceptor',
         'dns_setup',
+        'proxy_server',
         # Qt / WebEngine — PyInstaller no los detecta automáticamente
         'PyQt5.QtWebEngineWidgets',
         'PyQt5.QtWebEngineCore',
