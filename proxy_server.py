@@ -27,9 +27,17 @@ from typing import Optional
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 8899
 
-# IP directa de Cloudflare — no necesita DNS para resolver el resolvedor
-CLOUDFLARE_IP = "1.1.1.1"
 DOH_PATH = "/dns-query"
+
+# Servidores DoH probados en orden — si uno está bloqueado en la red, se usa el siguiente
+DOH_SERVERS = [
+    "8.8.8.8",    # Google Public DNS
+    "8.8.4.4",    # Google Public DNS secundario
+    "9.9.9.9",    # Quad9
+    "149.112.112.112",  # Quad9 secundario
+    "1.0.0.1",    # Cloudflare secundario
+    "1.1.1.1",    # Cloudflare primario
+]
 
 BUFFER = 65536
 TUNNEL_TIMEOUT = 90  # segundos
@@ -45,42 +53,42 @@ _cache_lock = threading.Lock()
 
 def _resolve_doh(hostname: str) -> Optional[str]:
     """
-    Resuelve un hostname consultando Cloudflare DoH en 1.1.1.1:443.
-    Conecta por IP para evitar depender del DNS del sistema.
-    Incluye caché con TTL.
+    Resuelve un hostname via DoH probando múltiples servidores.
+    Si el firewall bloquea uno (ej. 1.1.1.1), usa el siguiente (8.8.8.8, etc.).
+    TLS cifra el tráfico; CERT_NONE evita fallo por falta de CA bundle en PyInstaller.
     """
-    # Revisar caché
     with _cache_lock:
         entry = _cache.get(hostname)
         if entry and time.monotonic() < entry[1]:
             return entry[0]
 
-    try:
-        # No verificar cert: conectamos a IP hardcodeada (1.1.1.1), el tráfico
-        # sigue cifrado. PyInstaller no incluye el bundle de CA de Python.
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        conn = http.client.HTTPSConnection(CLOUDFLARE_IP, context=ctx, timeout=5)
-        conn.request(
-            "GET",
-            f"{DOH_PATH}?name={hostname}&type=A",
-            headers={"Accept": "application/dns-json"},
-        )
-        resp = conn.getresponse()
-        if resp.status == 200:
-            data = json.loads(resp.read())
-            for answer in data.get("Answer", []):
-                if answer.get("type") == 1:  # tipo A = IPv4
-                    ip = answer["data"]
-                    ttl = max(int(answer.get("TTL", 300)), 30)
-                    with _cache_lock:
-                        _cache[hostname] = (ip, time.monotonic() + ttl)
-                    conn.close()
-                    return ip
-        conn.close()
-    except Exception as exc:
-        logging.debug("DoH falló para %s: %s", hostname, exc)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    for server_ip in DOH_SERVERS:
+        try:
+            conn = http.client.HTTPSConnection(server_ip, context=ctx, timeout=3)
+            conn.request(
+                "GET",
+                f"{DOH_PATH}?name={hostname}&type=A",
+                headers={"Accept": "application/dns-json"},
+            )
+            resp = conn.getresponse()
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                for answer in data.get("Answer", []):
+                    if answer.get("type") == 1:  # tipo A = IPv4
+                        ip = answer["data"]
+                        ttl = max(int(answer.get("TTL", 300)), 30)
+                        with _cache_lock:
+                            _cache[hostname] = (ip, time.monotonic() + ttl)
+                        conn.close()
+                        return ip
+            conn.close()
+        except Exception as exc:
+            logging.debug("DoH falló para %s vía %s: %s", hostname, server_ip, exc)
+            continue
     return None
 
 
