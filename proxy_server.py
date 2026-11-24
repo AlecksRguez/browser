@@ -56,9 +56,11 @@ def _resolve_doh(hostname: str) -> Optional[str]:
             return entry[0]
 
     try:
-        ctx = ssl.create_default_context()
-        # Conecta directamente a 1.1.1.1 (sin DNS), con verificación TLS normal
-        # (Cloudflare tiene cert válido para 1.1.1.1 como SAN)
+        # No verificar cert: conectamos a IP hardcodeada (1.1.1.1), el tráfico
+        # sigue cifrado. PyInstaller no incluye el bundle de CA de Python.
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
         conn = http.client.HTTPSConnection(CLOUDFLARE_IP, context=ctx, timeout=5)
         conn.request(
             "GET",
