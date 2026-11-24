@@ -1,21 +1,33 @@
 """
 CloudBrowser - Navegador con privacidad mejorada via Cloudflare 1.1.1.1
+
+Arquitectura de bypass DNS:
+  1. proxy_server.py arranca un proxy HTTP local en 127.0.0.1:8899.
+  2. Chromium se configura para usar ese proxy con --proxy-server.
+  3. Para cada petición el proxy resuelve el hostname via DoH a 1.1.1.1:443
+     (no usa el DNS del sistema, que el firewall intercepta).
+  4. El firewall no puede bloquear las consultas DoH porque van cifradas
+     por el puerto 443, igual que cualquier HTTPS normal.
 """
 import os
 import sys
 
-# Debe configurarse ANTES de crear QApplication
-# --no-sandbox: necesario en ejecutables PyInstaller donde el sandbox de
-#   Chromium no puede inicializarse correctamente, causando ERR_CONNECTION_RESET
-# --disable-dev-shm-usage: evita fallos por memoria compartida limitada en Windows
-# DoH: DNS sobre HTTPS apuntando a Cloudflare 1.1.1.1
+# Arrancar el proxy DoH ANTES de cualquier import de Qt
+from proxy_server import DoHProxyServer as _DoHProxyServer
+_proxy = _DoHProxyServer()
+_proxy_running = _proxy.start()
+
+# Chromium debe usar nuestro proxy local para que el DNS pase por DoH.
+# --proxy-server: todo el tráfico del navegador pasa por 127.0.0.1:8899.
+# --proxy-bypass-list: localhost y 127.x no usan el proxy (evita bucles).
+# --no-sandbox: necesario en ejecutables empaquetados con PyInstaller.
+_proxy_flag = "--proxy-server=http://127.0.0.1:8899 " if _proxy_running else ""
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    f"{_proxy_flag}"
+    "--proxy-bypass-list=localhost;127.0.0.1;::1 "
     "--no-sandbox "
-    "--disable-dev-shm-usage "
-    "--dns-over-https-servers=https://cloudflare-dns.com/dns-query "
-    "--enable-features=DnsOverHttps "
-    "--disable-features=DnsOverHttpsUpgrade"
-)
+    "--disable-dev-shm-usage"
+).strip()
 
 # Habilita soporte para pantallas HiDPI
 os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
