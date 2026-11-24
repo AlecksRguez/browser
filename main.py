@@ -5,8 +5,13 @@ import os
 import sys
 
 # Debe configurarse ANTES de crear QApplication
-# Activa DNS sobre HTTPS (DoH) usando Cloudflare 1.1.1.1 en el motor Chromium
+# --no-sandbox: necesario en ejecutables PyInstaller donde el sandbox de
+#   Chromium no puede inicializarse correctamente, causando ERR_CONNECTION_RESET
+# --disable-dev-shm-usage: evita fallos por memoria compartida limitada en Windows
+# DoH: DNS sobre HTTPS apuntando a Cloudflare 1.1.1.1
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--no-sandbox "
+    "--disable-dev-shm-usage "
     "--dns-over-https-servers=https://cloudflare-dns.com/dns-query "
     "--enable-features=DnsOverHttps "
     "--disable-features=DnsOverHttpsUpgrade"
