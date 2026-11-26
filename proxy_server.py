@@ -29,14 +29,14 @@ PROXY_PORT = 8899
 
 DOH_PATH = "/dns-query"
 
-# Servidores DoH probados en orden — si uno está bloqueado en la red, se usa el siguiente
+# (IP, Host virtual) — el Host header es necesario para que el servidor sirva la respuesta correcta
 DOH_SERVERS = [
-    "8.8.8.8",    # Google Public DNS
-    "8.8.4.4",    # Google Public DNS secundario
-    "9.9.9.9",    # Quad9
-    "149.112.112.112",  # Quad9 secundario
-    "1.0.0.1",    # Cloudflare secundario
-    "1.1.1.1",    # Cloudflare primario
+    ("8.8.8.8",         "dns.google"),
+    ("8.8.4.4",         "dns.google"),
+    ("9.9.9.9",         "dns.quad9.net"),
+    ("149.112.112.112", "dns.quad9.net"),
+    ("1.0.0.1",         "cloudflare-dns.com"),
+    ("1.1.1.1",         "cloudflare-dns.com"),
 ]
 
 BUFFER = 65536
@@ -66,14 +66,15 @@ def _resolve_doh(hostname: str) -> Optional[str]:
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
-    for server_ip in DOH_SERVERS:
+    for server_ip, server_host in DOH_SERVERS:
         try:
             conn = http.client.HTTPSConnection(server_ip, context=ctx, timeout=3)
-            conn.request(
-                "GET",
-                f"{DOH_PATH}?name={hostname}&type=A",
-                headers={"Accept": "application/dns-json"},
-            )
+            # skip_host=True para enviar Host correcto (virtual hosting)
+            conn.putrequest("GET", f"{DOH_PATH}?name={hostname}&type=A",
+                            skip_host=True, skip_accept_encoding=True)
+            conn.putheader("Host", server_host)
+            conn.putheader("Accept", "application/dns-json")
+            conn.endheaders()
             resp = conn.getresponse()
             if resp.status == 200:
                 data = json.loads(resp.read())
@@ -143,14 +144,17 @@ def _tunnel(a: socket.socket, b: socket.socket) -> None:
 def _diag_page() -> bytes:
     """Página de diagnóstico: prueba DoH y reporta resultados."""
     lines = ["CloudBrowser Proxy - Diagnóstico\n", "=" * 40 + "\n\n"]
-    for ip in DOH_SERVERS:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    for server_ip, server_host in DOH_SERVERS:
         try:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            conn = http.client.HTTPSConnection(ip, context=ctx, timeout=3)
-            conn.request("GET", f"{DOH_PATH}?name=youtube.com&type=A",
-                         headers={"Accept": "application/dns-json"})
+            conn = http.client.HTTPSConnection(server_ip, context=ctx, timeout=3)
+            conn.putrequest("GET", f"{DOH_PATH}?name=youtube.com&type=A",
+                            skip_host=True, skip_accept_encoding=True)
+            conn.putheader("Host", server_host)
+            conn.putheader("Accept", "application/dns-json")
+            conn.endheaders()
             resp = conn.getresponse()
             if resp.status == 200:
                 data = json.loads(resp.read())
@@ -161,7 +165,7 @@ def _diag_page() -> bytes:
             conn.close()
         except Exception as e:
             result = f"ERROR: {e}"
-        lines.append(f"DoH {ip}: {result}\n")
+        lines.append(f"DoH {server_ip} (Host:{server_host}): {result}\n")
 
     body = "".join(lines).encode()
     return (
